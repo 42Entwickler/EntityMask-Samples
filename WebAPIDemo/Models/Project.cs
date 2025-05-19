@@ -19,5 +19,6 @@ public class Project {
     [Mask("ApiList")]
     public User? Owner { get; set; }
     [Mask("ApiList")]
+    [Mask("Api")]
     public List<User>? Users { get; set; }
 }
