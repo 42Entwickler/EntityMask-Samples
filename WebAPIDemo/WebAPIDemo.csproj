@@ -7,8 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="42Entwickler.EntityMask" Version="1.0.0.1" />
-    <PackageReference Include="42Entwickler.EntityMask.Generator" Version="0.1.0.4">
+    <PackageReference Include="42Entwickler.EntityMask" Version="1.0.0.2" />
+    <PackageReference Include="42Entwickler.EntityMask.Generator" Version="0.1.0.5">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
