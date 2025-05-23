@@ -1,5 +1,4 @@
 # EntityMask
-This is a demo project that represents a showcase for using 42Entwickler.EntityMask sourcegenerator for more comfort dealing with data transfer objects.
 
 EntityMask is a powerful, lightweight framework for creating strongly typed view projections of your domain entities through code generation. It allows you to define "masks" that expose only selected properties of your entities, transform values, and support deep object mapping without runtime reflection.
 
@@ -167,23 +166,98 @@ public class DateTimeToStringConverter : IValueConverter<DateTime, string>
 }
 ```
 
-### Deep Mapping
+### Deep Mapping for Single Objects and Collections
 
-Enable deep mapping to automatically convert nested objects and collections:
+Deep mapping automatically converts both individual nested objects and collections to their corresponding mask types:
 
 ```csharp
-// Enable deep mapping for nested objects
-[EntityMask("api", EnableDeepMapping = true)]
-public class Order
+[EntityMask("Api", true)]  // EnableDeepMapping = true
+public class Project
 {
     public int Id { get; set; }
-    public DateTime OrderDate { get; set; }
+    public string Title { get; set; }
     
-    // This will be automatically mapped to CustomerApiMask if Customer has an API mask
-    public Customer Customer { get; set; }
+    // Single object deep mapping - will be converted to UserApiMask
+    public User Owner { get; set; }
     
-    // Collection properties are also automatically mapped
-    public List<OrderItem> Items { get; set; }
+    // Collection deep mapping - will be converted to IEnumerable<UserApiMask>  
+    public List<User> Users { get; set; }
+}
+
+[EntityMask("Api")]  // User also needs an Api mask for deep mapping to work
+public class User
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    [Mask("Api")]
+    public string PasswordHash { get; set; }  // Hidden in API mask
+}
+
+// Generated ProjectApiMask will have:
+public class ProjectApiMask
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    
+    // Deep mapped single object - lazy created when accessed
+    public UserApiMask? Owner 
+    { 
+        get => _entity.Owner != null ? new UserApiMask(_entity.Owner) : null;
+        set => _entity.Owner = value; // Implicit conversion
+    }
+    
+    // Deep mapped collection - lazy proxy collection
+    public IList<UserApiMask> Users { get; set; }
+}
+
+// Usage
+var project = GetProject();
+var projectMask = project.ToApiMask();
+
+// Access deep mapped properties
+var ownerMask = projectMask.Owner;        // UserApiMask (password hidden)
+var userMasks = projectMask.Users;        // IList<UserApiMask> (passwords hidden)
+```
+
+**Important:** Both the parent entity (Project) and child entities (User) must have masks with the same name ("Api") for deep mapping to work.
+
+### Nullable Reference Types Support
+
+EntityMask fully supports C# nullable reference types and nullable value types:
+
+```csharp
+[EntityMask("Api", true)]
+public class Customer
+{
+    public int Id { get; set; }
+    public string? Name { get; set; }           // Nullable string
+    public DateTime? BirthDate { get; set; }    // Nullable DateTime
+    
+    // Nullable object with deep mapping
+    public Address? PrimaryAddress { get; set; }
+}
+
+[EntityMask("Api")]
+public class Address
+{
+    public string? Street { get; set; }
+    public string? City { get; set; }
+}
+
+// Generated mask preserves nullability:
+public class CustomerApiMask
+{
+    public string? Name { get; set; }                    // Nullable string preserved
+    public DateTime? BirthDate { get; set; }             // Nullable DateTime preserved
+    public AddressApiMask? PrimaryAddress { get; set; }  // Deep mapped nullable object
+}
+
+// Usage with null safety
+CustomerApiMask mask = customer.ToApiMask();
+if (mask.PrimaryAddress?.Street != null)
+{
+    Console.WriteLine($"Street: {mask.PrimaryAddress.Street}");
 }
 ```
 
@@ -201,6 +275,57 @@ public class Product
 
 // Usage
 var productDto = product.ToProductDto();  // Instead of .ToApiMask()
+```
+
+### Generated Extension Methods
+
+For each mask, EntityMask generates extension methods following the pattern `To{MaskName}Mask()`:
+
+```csharp
+[EntityMask("Api")]      // Generates: ToApiMask()
+[EntityMask("Admin")]    // Generates: ToAdminMask()  
+[EntityMask]             // Generates: ToMask() (default mask)
+[EntityMask("List", ClassName = "UserListDto")]  // Generates: ToUserListDto()
+public class User
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
+
+// All generated extension methods:
+public static class UserMaskExtensions
+{
+    // Single entity conversions
+    public static UserApiMask ToApiMask(this User entity)
+    public static UserAdminMask ToAdminMask(this User entity)
+    public static UserMask ToMask(this User entity)
+    public static UserListDto ToUserListDto(this User entity)
+    
+    // Collection conversions (lazy evaluation)
+    public static IEnumerable<UserApiMask> ToApiMask(this IEnumerable<User> entities)
+    public static IList<UserApiMask> ToApiMask(this IList<User> entities)
+    public static IList<UserApiMask> ToApiMask(this List<User> entities)
+    public static IReadOnlyList<UserApiMask> ToApiMask(this User[] entities)
+    public static IReadOnlyCollection<UserApiMask> ToApiMask(this IReadOnlyCollection<User> entities)
+    
+    // Fluent API for entity updates
+    public static User UpdateFrom(this User entity, UserApiMask mask)
+}
+
+// Usage examples:
+User user = GetUser();
+List<User> users = GetUsers();
+
+// Single conversions
+UserApiMask apiMask = user.ToApiMask();
+UserAdminMask adminMask = user.ToAdminMask();
+
+// Collection conversions (lazy - no immediate allocation)
+IEnumerable<UserApiMask> apiMasks = users.ToApiMask();
+IList<UserApiMask> apiMasksList = users.ToApiMask();
+
+// Entity updates
+user.UpdateFrom(apiMask);  // Updates user with values from mask
 ```
 
 ## Advanced Features
@@ -294,6 +419,8 @@ Console.WriteLine(customer.Name);  // Outputs: New Name
 Customer originalEntity = customerMask;  // Get the original entity
 ```
 
+<!--
+TODO: NEED TO BE IMPLEMENTED
 ### Custom Collection Converters
 
 Implement custom collection converters for specialized collection mapping:
@@ -313,7 +440,56 @@ public class CustomCollectionConverter<T> : ICollectionConverter<T, CustomMask<T
         return collection.Select(mask => mask.GetEntity());
     }
 }
+```-->
+
+### Built-in Collection Support
+
+EntityMask provides built-in support for common collection types through lazy proxy collections:
+
+```csharp
+[EntityMask("Api", EnableDeepMapping = true)]
+public class Order
+{
+    public int Id { get; set; }
+    
+    // Supported collection types for deep mapping:
+    public List<OrderItem> Items { get; set; }              // → IList<OrderItemApiMask>
+    public OrderItem[] ItemsArray { get; set; }             // → IReadOnlyList<OrderItemApiMask>
+    public ICollection<OrderItem> ItemsCollection { get; set; } // → IList<OrderItemApiMask>
+    public IList<OrderItem> ItemsList { get; set; }         // → IList<OrderItemApiMask>
+    public IReadOnlyCollection<OrderItem> ReadOnlyItems { get; set; } // → IReadOnlyCollection<OrderItemApiMask>
+    public IEnumerable<OrderItem> EnumerableItems { get; set; } // → IEnumerable<OrderItemApiMask>
+}
+
+// Generated lazy proxy collections automatically handle:
+// ✅ Lazy evaluation (O(1) conversion)
+// ✅ On-demand mask creation
+// ✅ Bidirectional conversion (setting collections back to entity)
+// ✅ Type preservation (List → IList, Array → IReadOnlyList, etc.)
 ```
+
+### Collection Extension Methods
+
+EntityMask generates extension methods for manual collection conversion:
+
+```csharp
+List<User> users = GetUsers();
+
+// All supported collection conversions:
+IEnumerable<UserApiMask> enumerable = users.ToApiMask();        // Lazy
+IList<UserApiMask> list = users.ToApiMask();                    // Lazy proxy
+IReadOnlyList<UserApiMask> readOnlyList = users.ToArray().ToApiMask(); // Lazy proxy
+IReadOnlyCollection<UserApiMask> readOnly = users.AsReadOnly().ToApiMask(); // Lazy proxy
+
+// Performance: All conversions are O(1) operations using lazy proxies
+// Masks are created only when individual items are accessed
+foreach (var mask in enumerable.Take(5)) // Only creates 5 masks, not all
+{
+    Console.WriteLine(mask.Name);
+}
+```
+
+**Note:** Custom collection converters are not currently supported, but the built-in lazy proxy system handles most use cases efficiently.
 
 ## Performance Considerations
 
@@ -523,6 +699,62 @@ public class CustomersController : ControllerBase
     }
 }
 ```
+
+## Performance Optimizations
+
+### Direct Property Access (No Caching Overhead)
+
+EntityMask uses a direct property access pattern for optimal performance:
+
+```csharp
+// Generated deep mapped property uses direct creation pattern
+public UserApiMask? Owner
+{
+    get => _entity.Owner != null ? new UserApiMask(_entity.Owner) : null;
+    set => _entity.Owner = value; // Implicit conversion
+}
+```
+
+**Benefits:**
+- ✅ **Always Current**: No stale cache data issues
+- ✅ **Memory Efficient**: No additional backing fields
+- ✅ **Simple**: Easy to understand and debug
+- ✅ **Thread Safe**: No mutable state between threads
+
+### Lazy Collection Proxies
+
+Collection mappings use lazy proxy patterns for maximum efficiency:
+
+```csharp
+IEnumerable<User> users = GetThousandsOfUsers();
+IEnumerable<UserApiMask> masks = users.ToApiMask();  // O(1) operation!
+
+// Masks are created only when accessed
+foreach (var mask in masks.Take(10))  // Only 10 masks created, not thousands
+{
+    Console.WriteLine(mask.Name);
+}
+```
+
+### Implicit Conversions for Zero-Copy Operations
+
+```csharp
+// Zero-copy access to underlying entity
+User originalUser = userMask;  // No object creation
+
+// Direct entity updates through mask
+userMask.Name = "New Name";    // Directly updates _entity.Name
+```
+
+### Performance Characteristics
+
+| Operation | Time Complexity | Memory Impact |
+|-----------|----------------|---------------|
+| Single mask creation | O(1) | 1 object allocation |
+| Collection conversion | O(1) | Lazy proxy only |
+| Property access | O(1) | No additional allocations |
+| Deep mapped access | O(1) | Creates mask on demand |
+| Entity updates | O(1) | Direct property assignment |
 
 ## License
 
