@@ -1,7 +1,6 @@
-# EntityMask
-This is a demo project that represents a showcase for using 42Entwickler.EntityMask sourcegenerator for more comfort dealing with data transfer objects.
+﻿# EntityMask
 
-EntityMask is a powerful, lightweight framework for creating strongly typed view projections of your domain entities through code generation. It allows you to define "masks" that expose only selected properties of your entities, transform values, and support deep object mapping without runtime reflection.
+EntityMask is a powerful, lightweight framework for creating strongly typed view projections of your domain entities through code generation. It allows you to define "masks" that expose only selected properties of your entities, transform values, support deep object mapping, and provides fine-grained control over attribute inheritance - all without runtime reflection.
 
 ## Packages
 
@@ -104,11 +103,10 @@ public class Project
     
     // Combine renaming with conversion
     [RenameInMask("StartDate", "api")]
-    [ConvertInMask(typeof(DateTimeToStringConverter), "api")]
     public DateTime Start { get; set; }
     
     // Rename in all masks (default)
-    [RenameInMask("EndDate")]
+    [RenameInMask("EndDate", "api")]
     public DateTime PlanedEnd { get; set; }
 }
 
@@ -123,6 +121,7 @@ public class Project
 Transform property values when exposed through a mask:
 
 ```csharp
+[EntityMask("api")]]
 public class User
 {
     // Transform phone number in the API mask
@@ -145,6 +144,7 @@ public class User
 Perform bidirectional conversion of property values with custom converters:
 
 ```csharp
+[EntityMask]
 public class Customer
 {
     // Use a custom converter for date formatting
@@ -167,23 +167,446 @@ public class DateTimeToStringConverter : IValueConverter<DateTime, string>
 }
 ```
 
-### Deep Mapping
+### Attribute Control
 
-Enable deep mapping to automatically convert nested objects and collections:
+EntityMask provides powerful attribute control capabilities, allowing you to precisely manage which attributes from your entity properties are copied to the generated mask classes. This is essential for creating clean APIs, proper JSON serialization, and context-specific validation.
+
+#### Understanding Attribute Inheritance
+
+**By default, EntityMask copies ALL attributes** from entity properties to mask properties. This ensures that serialization, validation, and display attributes work correctly without additional configuration:
 
 ```csharp
-// Enable deep mapping for nested objects
-[EntityMask("api", EnableDeepMapping = true)]
+[EntityMask("api")]
+public class User
+{
+    [Key]                               // Database attribute
+    [JsonPropertyName("user_id")]       // JSON serialization
+    [Required]                          // Validation
+    [Display(Name = "User ID")]         // UI display
+    public int Id { get; set; }
+}
+
+// Generated UserApiMask will have ALL attributes:
+public class UserApiMask
+{
+    [Key]
+    [JsonPropertyName("user_id")]
+    [Required]
+    [Display(Name = "User ID")]
+    public int Id { get; set; }
+}
+```
+
+#### The AttributeInMask Attribute
+
+Use `AttributeInMaskAttribute` for fine-grained control over attribute inheritance:
+
+```csharp
+[AttributeInMask(maskName, changeType, ...)]
+```
+
+**ChangeType Options:**
+- `ChangeType.Hide` - Remove existing attributes
+- `ChangeType.Add` - Add new attributes  
+- `ChangeType.Set` - Replace attributes (atomic hide + add)
+- `ChangeType.Include` - Override class-level hiding
+
+#### Hiding Attributes
+
+Remove unwanted attributes from mask properties:
+
+```csharp
+[EntityMask("api")]
+[AttributeInMask("api", ChangeType.Hide, typeof(KeyAttribute), typeof(ColumnAttribute))]
+public class Product
+{
+    [Key]                           // Hidden in API mask
+    [Column("product_id")]          // Hidden in API mask  
+    [JsonPropertyName("id")]        // Kept in API mask
+    [Required]                      // Kept in API mask
+    public int Id { get; set; }
+}
+
+// Generated ProductApiMask:
+public class ProductApiMask
+{
+    [JsonPropertyName("id")]    // ✅ Database attributes removed
+    [Required]                  // ✅ Business attributes preserved
+    public int Id { get; set; }
+}
+```
+
+##### Hide by Namespace
+
+Hide entire namespaces of attributes:
+
+```csharp
+[EntityMask("clean")]
+[AttributeInMask("clean", ChangeType.Hide, 
+    AttributeNamespaces = new[] { "System.ComponentModel.DataAnnotations.Schema" })]
+[Table("orders")]                   // Hidden (Schema)  
 public class Order
 {
+    [Key]                           // Kept (DataAnnotations, not Schema)
+    [Column("order_id")]            // Hidden (Schema)
+    [Required]                      // Kept (DataAnnotations)
+    [JsonPropertyName("id")]        // Kept (System.Text.Json)
     public int Id { get; set; }
-    public DateTime OrderDate { get; set; }
+}
+
+// Clean mask removes all EF Core schema attributes
+```
+
+##### Hide All Attributes
+
+Start with a clean slate:
+
+```csharp
+[EntityMask("minimal")]
+[AttributeInMask("minimal", ChangeType.Hide)]  // Hide ALL attributes
+public class Customer
+{
+    [JsonPropertyName("customer_id")]
+    [Required]
+    [Display(Name = "Customer ID")]
+    public int Id { get; set; }
+}
+
+// Generated CustomerMinimalMask has NO attributes:
+public class CustomerMinimalMask
+{
+    public int Id { get; set; }  // Clean property, no attributes
+}
+```
+
+#### Adding New Attributes
+
+Add mask-specific attributes that don't exist on the entity:
+
+```csharp
+[EntityMask("api")]
+public class Employee
+{
+    // Entity has no JSON attributes, but API mask needs them
+    [AttributeInMask("api", ChangeType.Add, typeof(JsonPropertyNameAttribute), "employee_id")]
+    [AttributeInMask("api", ChangeType.Add, typeof(RequiredAttribute))]
+    public int Id { get; set; }
+
+    [AttributeInMask("api", ChangeType.Add, typeof(JsonPropertyNameAttribute), "full_name")]
+    [AttributeInMask("api", ChangeType.Add, typeof(StringLengthAttribute), 100)]
+    public string Name { get; set; }
+}
+
+// Generated EmployeeApiMask adds API-specific attributes:
+public class EmployeeApiMask
+{
+    [JsonPropertyName("employee_id")]   // Added for API
+    [Required]                          // Added for API validation
+    public int Id { get; set; }
+
+    [JsonPropertyName("full_name")]     // Added for API  
+    [StringLength(100)]                 // Added for API validation
+    public string Name { get; set; }
+}
+```
+
+#### Adding Attributes with Named Properties
+
+For complex attributes that use property initialization:
+
+```csharp
+[EntityMask("display")]
+public class Article
+{
+    [AttributeInMask("display", ChangeType.Add, typeof(DisplayAttribute),
+        PropertyNames = new[] { "Name", "Description", "Order" },
+        PropertyValues = new object[] { "Article ID", "Unique identifier", 1 })]
+    public int Id { get; set; }
+}
+
+// Generated ArticleDisplayMask:
+public class ArticleDisplayMask
+{
+    [Display(Name = "Article ID", Description = "Unique identifier", Order = 1)]
+    public int Id { get; set; }
+}
+```
+
+#### Setting (Replacing) Attributes
+
+Atomically replace existing attributes with new ones:
+
+```csharp
+[EntityMask("v2")]
+public class Customer
+{
+    [JsonPropertyName("legacy_customer_id")]    // Old API format
+    [StringLength(50)]                          // Old validation rule
+    [Required]
+    // Replace JSON name and validation in one operation
+    [AttributeInMask("v2", ChangeType.Set, typeof(JsonPropertyNameAttribute), "id")]
+    [AttributeInMask("v2", ChangeType.Set, typeof(StringLengthAttribute), 100)]
+    public int Id { get; set; }
+}
+
+// Generated CustomerV2Mask:
+public class CustomerV2Mask
+{
+    [JsonPropertyName("id")]        // ✅ Replaced (old: "legacy_customer_id")
+    [StringLength(100)]             // ✅ Replaced (old: 50)
+    [Required]                      // ✅ Preserved (not replaced)
+    public int Id { get; set; }
+}
+```
+
+#### Property-Level Overrides
+
+Override class-level rules for specific properties:
+
+```csharp
+[EntityMask("selective")]
+[AttributeInMask("selective", ChangeType.Hide)]  // Hide ALL attributes by default
+public class Document
+{
+    [Key]
+    [Column("doc_id")]
+    [JsonPropertyName("id")]
+    [Required]
+    // Override: include only JSON attribute for this property
+    [AttributeInMask("selective", ChangeType.Include, typeof(JsonPropertyNameAttribute))]
+    public int Id { get; set; }
+
+    [Column("title")]
+    [JsonPropertyName("title")]
+    [StringLength(200)]
+    [Required]
+    // Override: include ALL attributes for this property
+    [AttributeInMask("selective", ChangeType.Include)]
+    public string Title { get; set; }
+
+    [Column("content")]
+    [JsonPropertyName("content")]
+    [StringLength(5000)]
+    // No override - all attributes hidden due to class-level rule
+    public string Content { get; set; }
+}
+
+// Generated DocumentSelectiveMask:
+public class DocumentSelectiveMask
+{
+    [JsonPropertyName("id")]                                        // Only JSON name
+    public int Id { get; set; }
+
+    [Column("title")]                                               // All attributes
+    [JsonPropertyName("title")]
+    [StringLength(200)]
+    [Required]
+    public string Title { get; set; }
+
+    public string Content { get; set; }                             // No attributes
+}
+```
+
+#### Multi-Mask Attribute Control
+
+Different attribute rules for different masks:
+
+```csharp
+[EntityMask("public")]
+[EntityMask("internal")]
+[AttributeInMask("public", ChangeType.Hide, typeof(KeyAttribute), typeof(ColumnAttribute))]  // Clean public API
+public class Task
+{
+    [Key]
+    [Column("task_id")]
+    [Required]
+    [AttributeInMask("public", ChangeType.Add, typeof(JsonPropertyNameAttribute), "id")]       // Public: clean name
+    [AttributeInMask("internal", ChangeType.Add, typeof(JsonPropertyNameAttribute), "task_id")] // Internal: detailed name
+    [AttributeInMask("internal", ChangeType.Set, typeof(ColumnAttribute), "taskId")]            // Internal: overwrite the value of the column attribute
+    public int Id { get; set; }
+}
+
+// Generated TaskPublicMask:
+public class TaskPublicMask
+{
+    [Required]                      // Database attributes hidden
+    [JsonPropertyName("id")]        // Clean API name
+    public int Id { get; set; }
+}
+
+// Generated TaskInternalMask:  
+public class TaskInternalMask
+{
+    [Key]                           // All attributes preserved
+    [Column("taskId")]              // Value is overwritten by the ChangeType.Set.
+    [Required]
+    [JsonPropertyName("task_id")]   // Detailed internal name
+    public int Id { get; set; }
+}
+```
+
+#### Clean REST APIs - Practical Use Cases
+
+Transform database entities into clean API DTOs:
+
+```csharp
+[EntityMask("rest")]
+[AttributeInMask("rest", ChangeType.Hide)]  // Start clean
+public class User
+{
+    [Key]
+    [Column("user_id")]
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    [AttributeInMask("rest", ChangeType.Add, typeof(JsonPropertyNameAttribute), "id")]
+    [AttributeInMask("rest", ChangeType.Add, typeof(RequiredAttribute))]
+    public int Id { get; set; }
+
+    [Column("email_address")]
+    [StringLength(255)]
+    [EmailAddress]
+    [AttributeInMask("rest", ChangeType.Add, typeof(JsonPropertyNameAttribute), "email")]
+    [AttributeInMask("rest", ChangeType.Include, typeof(StringLengthAttribute), typeof(EmailAddressAttribute))]
+    public string Email { get; set; }
+
+    [Column("password_hash")]
+    [StringLength(500)]
+    // This property stays hidden (no Include override)
+    public string PasswordHash { get; set; }
+}
+
+// Generated UserRestMask:
+public class UserRestMask
+{
+    [JsonPropertyName("id")]
+    [Required]
+    public int Id { get; set; }
+
+    [JsonPropertyName("email")]
+    [StringLength(255)]
+    [EmailAddress]
+    public string Email { get; set; }
+
+    // PasswordHash property doesn't exist in mask (hidden)
+}
+```
+
+#### Framework Integration - Practical Use Cases
+
+Optimize attributes for different serialization frameworks:
+
+```csharp
+[EntityMask("json")]   // System.Text.Json optimized
+[EntityMask("xml")]    // XML serialization optimized
+
+[AttributeInMask("json", ChangeType.Hide, AttributeNamespaces = new[] { "System.Xml.Serialization" })]
+[AttributeInMask("xml", ChangeType.Hide, AttributeNamespaces = new[] { "System.Text.Json" })]
+public class Product
+{
+    [JsonPropertyName("product_id")]        // For JSON
+    [XmlElement("ProductID")]               // For XML
+    [Required]
+    public int Id { get; set; }
+}
+
+// JsonMask: only JSON attributes
+// XmlMask: only XML attributes
+// Both preserve Required validation
+```
+
+Attributes have sooo many possibilities ;-)
+
+### Deep Mapping for Single Objects and Collections
+
+Deep mapping automatically converts both individual nested objects and collections to their corresponding mask types:
+
+```csharp
+[EntityMask("Api", true)]  // EnableDeepMapping = true
+public class Project
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
     
-    // This will be automatically mapped to CustomerApiMask if Customer has an API mask
-    public Customer Customer { get; set; }
+    // Single object deep mapping - will be converted to UserApiMask
+    public User Owner { get; set; }
     
-    // Collection properties are also automatically mapped
-    public List<OrderItem> Items { get; set; }
+    // Collection deep mapping - will be converted to IEnumerable<UserApiMask>  
+    public List<User> Users { get; set; }
+}
+
+[EntityMask("Api")]  // User also needs an Api mask for deep mapping to work
+public class User
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    
+    [Mask("Api")]
+    public string PasswordHash { get; set; }  // Hidden in API mask
+}
+
+// Generated ProjectApiMask will have:
+public class ProjectApiMask
+{
+    public int Id { get; set; }
+    public string Title { get; set; }
+    
+    // Deep mapped single object - lazy created when accessed
+    public UserApiMask? Owner 
+    { 
+        get => _entity.Owner != null ? new UserApiMask(_entity.Owner) : null;
+        set => _entity.Owner = value; // Implicit conversion
+    }
+    
+    // Deep mapped collection - lazy proxy collection
+    public IList<UserApiMask> Users { get; set; }
+}
+
+// Usage
+var project = GetProject();
+var projectMask = project.ToApiMask();
+
+// Access deep mapped properties
+var ownerMask = projectMask.Owner;        // UserApiMask (password hidden)
+var userMasks = projectMask.Users;        // IList<UserApiMask> (passwords hidden)
+```
+
+**Important:** Both the parent entity (Project) and child entities (User) must have masks with the same name ("Api") for deep mapping to work.
+
+### Nullable Reference Types Support
+
+EntityMask fully supports C# nullable reference types and nullable value types:
+
+```csharp
+[EntityMask("Api", true)]
+public class Customer
+{
+    public int Id { get; set; }
+    public string? Name { get; set; }           // Nullable string
+    public DateTime? BirthDate { get; set; }    // Nullable DateTime
+    
+    // Nullable object with deep mapping
+    public Address? PrimaryAddress { get; set; }
+}
+
+[EntityMask("Api")]
+public class Address
+{
+    public string? Street { get; set; }
+    public string? City { get; set; }
+}
+
+// Generated mask preserves nullability:
+public class CustomerApiMask
+{
+    public string? Name { get; set; }                    // Nullable string preserved
+    public DateTime? BirthDate { get; set; }             // Nullable DateTime preserved
+    public AddressApiMask? PrimaryAddress { get; set; }  // Deep mapped nullable object
+}
+
+// Usage with null safety
+CustomerApiMask mask = customer.ToApiMask();
+if (mask.PrimaryAddress?.Street != null)
+{
+    Console.WriteLine($"Street: {mask.PrimaryAddress.Street}");
 }
 ```
 
@@ -203,7 +626,56 @@ public class Product
 var productDto = product.ToProductDto();  // Instead of .ToApiMask()
 ```
 
-## Advanced Features
+### Generated Extension Methods
+
+For each mask, EntityMask generates extension methods following the pattern `To{MaskName}Mask()`:
+
+```csharp
+[EntityMask("Api")]      // Generates: ToApiMask()
+[EntityMask("Admin")]    // Generates: ToAdminMask()  
+[EntityMask]             // Generates: ToMask() (default mask)
+[EntityMask("List", ClassName = "UserListDto")]  // Generates: ToUserListDto()
+public class User
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
+
+// All generated extension methods:
+public static class UserMaskExtensions
+{
+    // Single entity conversions
+    public static UserApiMask ToApiMask(this User entity)
+    public static UserAdminMask ToAdminMask(this User entity)
+    public static UserMask ToMask(this User entity)
+    public static UserListDto ToUserListDto(this User entity)
+    
+    // Collection conversions (lazy evaluation)
+    public static IEnumerable<UserApiMask> ToApiMask(this IEnumerable<User> entities)
+    public static IList<UserApiMask> ToApiMask(this IList<User> entities)
+    public static IList<UserApiMask> ToApiMask(this List<User> entities)
+    public static IReadOnlyList<UserApiMask> ToApiMask(this User[] entities)
+    public static IReadOnlyCollection<UserApiMask> ToApiMask(this IReadOnlyCollection<User> entities)
+    
+    // Fluent API for entity updates
+    public static User UpdateFrom(this User entity, UserApiMask mask)
+}
+
+// Usage examples:
+User user = GetUser();
+List<User> users = GetUsers();
+
+// Single conversions
+UserApiMask apiMask = user.ToApiMask();
+UserAdminMask adminMask = user.ToAdminMask();
+
+// Collection conversions (lazy - no immediate allocation)
+IEnumerable<UserApiMask> apiMasks = users.ToApiMask();
+IList<UserApiMask> apiMasksList = users.ToApiMask();
+
+// Entity updates
+user.UpdateFrom(apiMask);  // Updates user with values from mask
+```
 
 ### Entity Updates with ApplyChangesTo and UpdateEntityFrom
 
@@ -294,6 +766,8 @@ Console.WriteLine(customer.Name);  // Outputs: New Name
 Customer originalEntity = customerMask;  // Get the original entity
 ```
 
+<!--
+TODO: NEED TO BE IMPLEMENTED
 ### Custom Collection Converters
 
 Implement custom collection converters for specialized collection mapping:
@@ -313,7 +787,56 @@ public class CustomCollectionConverter<T> : ICollectionConverter<T, CustomMask<T
         return collection.Select(mask => mask.GetEntity());
     }
 }
+```-->
+
+### Built-in Collection Support
+
+EntityMask provides built-in support for common collection types through lazy proxy collections:
+
+```csharp
+[EntityMask("Api", EnableDeepMapping = true)]
+public class Order
+{
+    public int Id { get; set; }
+    
+    // Supported collection types for deep mapping:
+    public List<OrderItem> Items { get; set; }              // → IList<OrderItemApiMask>
+    public OrderItem[] ItemsArray { get; set; }             // → IReadOnlyList<OrderItemApiMask>
+    public ICollection<OrderItem> ItemsCollection { get; set; } // → IList<OrderItemApiMask>
+    public IList<OrderItem> ItemsList { get; set; }         // → IList<OrderItemApiMask>
+    public IReadOnlyCollection<OrderItem> ReadOnlyItems { get; set; } // → IReadOnlyCollection<OrderItemApiMask>
+    public IEnumerable<OrderItem> EnumerableItems { get; set; } // → IEnumerable<OrderItemApiMask>
+}
+
+// Generated lazy proxy collections automatically handle:
+// ✅ Lazy evaluation (O(1) conversion)
+// ✅ On-demand mask creation
+// ✅ Bidirectional conversion (setting collections back to entity)
+// ✅ Type preservation (List → IList, Array → IReadOnlyList, etc.)
 ```
+
+### Collection Extension Methods
+
+EntityMask generates extension methods for manual collection conversion:
+
+```csharp
+List<User> users = GetUsers();
+
+// All supported collection conversions:
+IEnumerable<UserApiMask> enumerable = users.ToApiMask();        // Lazy
+IList<UserApiMask> list = users.ToApiMask();                    // Lazy proxy
+IReadOnlyList<UserApiMask> readOnlyList = users.ToArray().ToApiMask(); // Lazy proxy
+IReadOnlyCollection<UserApiMask> readOnly = users.AsReadOnly().ToApiMask(); // Lazy proxy
+
+// Performance: All conversions are O(1) operations using lazy proxies
+// Masks are created only when individual items are accessed
+foreach (var mask in enumerable.Take(5)) // Only creates 5 masks, not all
+{
+    Console.WriteLine(mask.Name);
+}
+```
+
+**Note:** Custom collection converters are not currently supported, but the built-in lazy proxy system handles most use cases efficiently.
 
 ## Performance Considerations
 
@@ -434,25 +957,37 @@ This analyzer helps prevent subtle runtime serialization errors by ensuring prop
 
 ## Examples
 
-Complete example with multiple features:
+Complete example with multiple features including attribute control:
 
 ```csharp
 [EntityMask("api")]
 [EntityMask("admin", EnableDeepMapping = true)]
+// Clean up database attributes in API, but keep them in admin view
+[AttributeInMask("api", ChangeType.Hide, typeof(KeyAttribute), typeof(ColumnAttribute))]
 public class Customer
 {
+    [Key]
+    [Column("customer_id")]
+    [AttributeInMask("api", ChangeType.Add, typeof(JsonPropertyNameAttribute), "id")]
     public int Id { get; set; }
     
+    [Column("customer_name")]
+    [AttributeInMask("api", ChangeType.Add, typeof(JsonPropertyNameAttribute), "name")]
     public string Name { get; set; }
     
+    [Column("birth_date")]
     [RenameInMask("DateOfBirth", "api")]
     [ConvertInMask(typeof(DateTimeToStringConverter))]
+    [AttributeInMask("api", ChangeType.Add, typeof(JsonPropertyNameAttribute), "date_of_birth")]
     public DateTime BirthDate { get; set; }
     
+    [Column("phone")]
     [TransformInMask("FormatPhoneNumber", "api")]
+    [AttributeInMask("api", ChangeType.Add, typeof(JsonPropertyNameAttribute), "phone")]
     public string PhoneNumber { get; set; }
     
-    [Mask("api")]
+    [Column("credit_limit")]
+    [Mask("api")]  // Hidden in API, visible in admin
     public decimal CreditLimit { get; set; }
     
     [RenameInMask("PurchaseHistory", "admin")]
@@ -523,6 +1058,77 @@ public class CustomersController : ControllerBase
     }
 }
 ```
+
+The generated API mask will have clean JSON attributes without database-specific attributes:
+
+```json
+// CustomerApiMask JSON output:
+{
+  "id": 123,
+  "name": "John Doe",
+  "date_of_birth": "1990-05-15",
+  "phone": "555-123-4567"
+}
+
+// Notice: clean property names, formatted phone, ISO date, no credit_limit
+```
+
+## Performance Optimizations
+
+### Direct Property Access (No Caching Overhead)
+
+EntityMask uses a direct property access pattern for optimal performance:
+
+```csharp
+// Generated deep mapped property uses direct creation pattern
+public UserApiMask? Owner
+{
+    get => _entity.Owner != null ? new UserApiMask(_entity.Owner) : null;
+    set => _entity.Owner = value; // Implicit conversion
+}
+```
+
+**Benefits:**
+- ✅ **Always Current**: No stale cache data issues
+- ✅ **Memory Efficient**: No additional backing fields
+- ✅ **Simple**: Easy to understand and debug
+- ✅ **Thread Safe**: No mutable state between threads
+
+### Lazy Collection Proxies
+
+Collection mappings use lazy proxy patterns for maximum efficiency:
+
+```csharp
+IEnumerable<User> users = GetThousandsOfUsers();
+IEnumerable<UserApiMask> masks = users.ToApiMask();  // O(1) operation!
+
+// Masks are created only when accessed
+foreach (var mask in masks.Take(10))  // Only 10 masks created, not thousands
+{
+    Console.WriteLine(mask.Name);
+}
+```
+
+### Implicit Conversions for Zero-Copy Operations
+
+```csharp
+// Zero-copy access to underlying entity
+User originalUser = userMask;  // No object creation
+
+// Direct entity updates through mask
+userMask.Name = "New Name";    // Directly updates _entity.Name
+```
+
+### Performance Characteristics
+
+| Operation | Time Complexity | Memory Impact |
+|-----------|----------------|---------------|
+| Single mask creation | O(1) | 1 object allocation |
+| Collection conversion | O(1) | Lazy proxy only |
+| Property access | O(1) | No additional allocations |
+| Deep mapped access | O(1) | Creates mask on demand |
+| Entity updates | O(1) | Direct property assignment |
+| Attribute processing | O(1) | Compile-time generation |
 
 ## License
 
