@@ -1,4 +1,4 @@
-﻿# EntityMask
+# EntityMask
 
 EntityMask is a powerful, lightweight framework for creating strongly typed view projections of your domain entities through code generation. It allows you to define "masks" that expose only selected properties of your entities, transform values, support deep object mapping, and provides fine-grained control over attribute inheritance - all without runtime reflection.
 
@@ -114,6 +114,48 @@ public class Project
 // - Title as Name
 // - Start as StartDate (with conversion to string)
 // - PlanedEnd as EndDate
+```
+
+**Note:** All mask features (renaming, attribute control, deep mapping, etc.) work seamlessly with inherited properties.
+
+### Hide all Properties except Whitelisted
+
+The `MaskAllExceptAttribute` allows you to specify that **all properties except the listed ones** should be hidden in a given mask. This is useful for quickly exposing only a whitelist of properties for a mask, without having to mark every property individually.
+
+#### Usage Example
+
+```csharp
+public class CustomerBase {
+    public Guid SomeId { get; set; } // Hidden in api mask
+}
+
+[EntityMask("api")]
+[MaskAllExcept("api", nameof(Id), nameof(Name))]
+public class Customer : CustomerBase: {
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string InternalNotes { get; set; } // Hidden in api mask
+}
+```
+
+**Result:**
+- The generated `CustomerApiMask` will only contain `Id` and `Name` properties.
+- All other properties (`InternalNotes`, `SomeId`, etc.) are excluded from the mask.
+
+#### How it works
+- Place `[MaskAllExcept("maskName", ...propertyNames)]` on your entity class.
+- Only the listed properties will be visible in the generated mask for that mask name.
+- All other properties are automatically hidden for that mask.
+
+#### Generated Object by this example
+
+```csharp
+// Generated CustomerApiMask:
+public class CustomerApiMask {
+    public int Id { get; set; }
+    public string Name { get; set; }
+    // InternalNotes and SomeId are not present
+}
 ```
 
 ### Value Transformers
@@ -955,6 +997,61 @@ public ActionResult<ProjectApiMask> Get(int id)
 
 This analyzer helps prevent subtle runtime serialization errors by ensuring proper type conversions.
 
+### Analyzer: EntityMaskAttribute on Abstract Classes or Interfaces (EM007)
+
+EntityMask does **not** support mask generation for abstract classes or interfaces. The analyzer will report an error (EM007) if you apply `[EntityMask]` to an abstract class or interface:
+
+```csharp
+// ERROR: EntityMaskAttribute cannot be applied to abstract classes or interfaces
+[EntityMask("api")]
+public abstract class AbstractEntity { ... }
+
+[EntityMask("api")]
+public interface IEntity { ... }
+```
+
+**Fix:** Only apply `[EntityMask]` to concrete (non-abstract) classes:
+
+```csharp
+[EntityMask("api")]
+public class ConcreteEntity { ... }
+```
+
+**Diagnostic ID:** EM007
+
+**Message:** EntityMaskAttribute cannot be applied to abstract classes or interfaces (type: 'YourTypeName')
+
+### Analyzer: MaskAllExceptAttribute Property Validation (EM008)
+
+The analyzer checks that all property names specified in `MaskAllExceptAttribute` exist in the class or one of its base classes. If a property name does not exist, an error (EM008) is reported.
+
+```csharp
+// ERROR: Property does not exist in class or base class
+[EntityMask("api")]
+[MaskAllExcept("api", nameof(Id), "NonExistentProperty")]
+public class Customer : CustomerBase {
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
+```
+
+**Fix:** Only specify property names that exist in the class or its inheritance hierarchy:
+
+```csharp
+[EntityMask("api")]
+[MaskAllExcept("api", nameof(Id), nameof(Name))]
+public class Customer : CustomerBase {
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
+```
+
+**Diagnostic ID:** EM008
+
+**Message:** Property '{PropertyName}' specified in MaskAllExceptAttribute does not exist in class or base classes.
+
+---
+
 ## Examples
 
 Complete example with multiple features including attribute control:
@@ -964,6 +1061,7 @@ Complete example with multiple features including attribute control:
 [EntityMask("admin", EnableDeepMapping = true)]
 // Clean up database attributes in API, but keep them in admin view
 [AttributeInMask("api", ChangeType.Hide, typeof(KeyAttribute), typeof(ColumnAttribute))]
+
 public class Customer
 {
     [Key]
@@ -1103,7 +1201,7 @@ IEnumerable<User> users = GetThousandsOfUsers();
 IEnumerable<UserApiMask> masks = users.ToApiMask();  // O(1) operation!
 
 // Masks are created only when accessed
-foreach (var mask in masks.Take(10))  // Only 10 masks created, not thousands
+foreach (var mask in masks.Take(10))  // Only creates 10 masks, not thousands
 {
     Console.WriteLine(mask.Name);
 }
@@ -1119,7 +1217,52 @@ User originalUser = userMask;  // No object creation
 userMask.Name = "New Name";    // Directly updates _entity.Name
 ```
 
-### Performance Characteristics
+### Inheritance Support
+
+EntityMask fully supports inheritance for your entity models. When you use EntityMask on a derived class, the generated mask will automatically include all properties (and mask-relevant attributes) from the entire inheritance hierarchy, except those explicitly hidden or excluded. This makes it easy to work with transfer objects that inherit from base classes, ensuring all relevant data is available in the mask.
+
+#### How it works
+- All public and protected properties from base classes are included in the mask.
+- Mask attributes (e.g. `[Mask]`, `[RenameInMask]`, etc.) and attribute control rules from base classes are respected.
+- Hidden properties (via `[Mask]`) or excluded attributes are not included in the mask.
+- The mask is always a flattened view of the full object tree, ideal for DTOs and transfer objects.
+
+#### Example
+
+```csharp
+public class TenantDependendBase
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Tenant Tenant { get; set; } // Hidden in mask
+}
+
+[EntityMask("pub")]
+public class Board : TenantDependendBase
+{
+    public string Name { get; set; }
+    [Mask("pub")] // Hide Tenant property in mask
+    public new Tenant Tenant { get; set; }
+}
+
+// Generated BoardPubMask will have:
+public class BoardPubMask
+{
+    public Guid Id { get; set; }           // From base class
+    public Guid TenantId { get; set; }     // From base class
+    public string Name { get; set; }       // From Board
+    // No Tenant property (hidden)
+}
+
+// Usage
+var board = new Board { Id = Guid.NewGuid(), Name = "Test Board", TenantId = tenant.Id };
+BoardPubMask mask = board.ToPubMask();
+Console.WriteLine(mask.Id);        // Outputs base class property
+Console.WriteLine(mask.Name);      // Outputs derived class property
+Console.WriteLine(mask.TenantId);  // Outputs base class property
+```
+
+## Performance Characteristics
 
 | Operation | Time Complexity | Memory Impact |
 |-----------|----------------|---------------|
@@ -1145,3 +1288,7 @@ If you want to become a professional supporter and need an invoice - no problem.
 Your contributions, whether through code, ideas, bug reports, or financial support, are greatly valued and help keep this project active. While donations are absolutely optional, they provide a wonderful way to say "thanks" and encourage continued development.
 
 Feel free to reach out with questions, feedback, or feature requests at 42entwickler - at - gmail.com.
+
+
+
+---
