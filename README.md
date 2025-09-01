@@ -613,6 +613,59 @@ var userMasks = projectMask.Users;        // IList<UserApiMask> (passwords hidde
 
 **Important:** Both the parent entity (Project) and child entities (User) must have masks with the same name ("Api") for deep mapping to work.
 
+### MaskAlias: Reuse Child Mask Types Across Different Parent Masks
+
+Sometimes you want a parent entity to provide multiple masks (e.g., "Api" and "Api2"), but the child entity should only expose a single mask (e.g., only "Api"). With `MaskAliasAttribute` you can alias the deep-mapping for specific properties so different parent masks reuse the same child mask type.
+
+Use it on properties that are deep-mapped (single objects or collections):
+
+```csharp
+[EntityMask("Api", true)]
+[EntityMask("Api2", true)]
+public class ProjectWithDeep
+{
+    public int Id { get; set; }
+    public string Title { get; set; } = string.Empty;
+
+    // For the parent mask "Api2", reuse the child mask mapping of "Api"
+    [MaskAlias("Api2", "Api")]
+    public UserForDeep Owner { get; set; } = new();
+
+    // Works for collections as well
+    [MaskAlias("Api2", "Api")]
+    public List<UserForDeep> Users { get; set; } = new();
+}
+
+[EntityMask("Api")]  // Child exposes only Api mask
+public class UserForDeep
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+
+    [Mask("Api")] // Hidden in Api mask
+    public string PasswordHash { get; set; } = string.Empty;
+}
+
+// Usage
+var pro = new ProjectWithDeep();
+var apiMask = pro.ToApiMask();
+var api2Mask = pro.ToApi2Mask();
+
+// Deep-mapped properties in both masks use UserForDeepApiMask
+_ = (UserForDeepApiMask?)apiMask.Owner;
+_ = (UserForDeepApiMask?)api2Mask.Owner;
+_ = (List<UserForDeepApiMask>)apiMask.Users;
+_ = (List<UserForDeepApiMask>)api2Mask.Users;
+```
+
+Notes:
+- Destination mask is the first parameter of `MaskAlias(destinationMask, sourceMasks...)`.
+- One or more source masks can be listed; the generator tries them in order.
+- Works for single objects and for collections.
+- If a direct mapping exists for the destination mask, it is used; otherwise the alias is applied.
+
+This keeps your child entities simple (one mask) while still offering multiple parent views.
+
 ### Nullable Reference Types Support
 
 EntityMask fully supports C# nullable reference types and nullable value types:
@@ -805,7 +858,7 @@ customerMask.Name = "New Name";
 Console.WriteLine(customer.Name);  // Outputs: New Name
 
 // Implicit conversions
-Customer originalEntity = customerMask;  // Get the original entity
+Customer originalEntity = customerMask;  // No object creation
 ```
 
 <!--
