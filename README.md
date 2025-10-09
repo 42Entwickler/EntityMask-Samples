@@ -910,6 +910,18 @@ public class Order
 // ✅ Type preservation (List → IList, Array → IReadOnlyList, etc.)
 ```
 
+### Automated Entity Framework Projections
+Generated masks include a static `Projection` property that provides an Entity Framework projection expression for selecting only the mask’s properties. 
+Using this projection yields optimized SQL that selects just those columns, improving the efficiency of database queries. 
+The projection currently does not support deep mapping or properties that use transformations or `ValueConverters`; such members are omitted from the expression. 
+If a mask exposes no properties suitable for projection, no `Projection` property is generated.
+
+```csharp
+IEnumerable<UserApiMask> userDTOs = _dbContext.Users
+    .Where(u => u.IsActive)
+    .Select(UserApiMask.Projection); // Selects only properties defined in UserApiMask
+```
+
 ### Collection Extension Methods
 
 EntityMask generates extension methods for manual collection conversion:
