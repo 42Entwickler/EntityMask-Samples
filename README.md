@@ -911,7 +911,7 @@ public class Order
 ```
 
 ### Automated Entity Framework Projections
-Generated masks include a static `Projection` property that provides an Entity Framework projection expression for selecting only the mask’s properties. 
+Generated masks include a static `Projection` and a `ProjectionSlim` property that provides an Entity Framework projection expression for selecting only the mask’s properties. 
 Using this projection yields optimized SQL that selects just those columns, improving the efficiency of database queries. 
 The projection currently does not support deep mapping or properties that use transformations or `ValueConverters`; such members are omitted from the expression. 
 If a mask exposes no properties suitable for projection, no `Projection` property is generated.
@@ -919,7 +919,18 @@ If a mask exposes no properties suitable for projection, no `Projection` propert
 ```csharp
 IEnumerable<UserApiMask> userDTOs = _dbContext.Users
     .Where(u => u.IsActive)
-    .Select(UserApiMask.Projection); // Selects only properties defined in UserApiMask
+    .Select(UserApiMask.ProjectionSlim); // Selects only properties defined in UserApiMask
+```
+
+There are two projection properties:
+- `Projection` - also projects single navigation properties with the given properties of the mask of the projection property. If you use this `Projection` property you need to include the referencing navigation properties. Therefore a you can use the generated `RequiredIncludes` property.
+- `ProjectionSlim` - only includes the naive properties without any navigation properties. But consider if you should create an additional mask without the navigation property mapping. It depends on your usecase!
+
+```csharp
+IEnumerable<UserApiMask> userDTOs = _dbContext.Users
+    .Include(UserApiMask.RequiredIncludes)
+    .Where(u => u.IsActive)
+    .Select(UserApiMask.Projection); // Selects only properties defined in UserApiMask but also joins any included / masked navigation properties.
 ```
 
 ### Collection Extension Methods
