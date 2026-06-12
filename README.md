@@ -9,6 +9,9 @@ EntityMask is a powerful, lightweight framework for creating strongly typed view
 | `42Entwickler.EntityMask` | Core library with attributes and runtime components | [![NuGet](https://img.shields.io/nuget/v/42Entwickler.EntityMask.svg)](https://www.nuget.org/packages/42Entwickler.EntityMask/) |
 | `42Entwickler.EntityMask.Generator` | Source generator that creates mask classes at compile time | [![NuGet](https://img.shields.io/nuget/v/42Entwickler.EntityMask.Generator.svg)](https://www.nuget.org/packages/42Entwickler.EntityMask.Generator/) |
 
+## Used by
+[![Voice-Board.com](https://voice-board.com/voice-board-64.png)](https://voice-board.com) *Voice-Board.com* - Products for People. Customer Feedback & Project Management Tool.
+
 ## Getting Started
 
 ### Installation
